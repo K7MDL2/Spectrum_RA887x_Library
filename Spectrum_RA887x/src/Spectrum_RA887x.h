@@ -51,9 +51,12 @@
 
 // USER DEFINED SECTION --------------------------------------------------------------------//
 
-
 //#define USE_RA8875  // ********** Comment this line for RA8876.  Also in your main program **************
 
+// uncomment one of these to account for Touch interrupt differences.  
+// If not using either board, comment them both out to use the default old values
+//#define LARGE_PCB_V1   // For the V1 large 4.3" motherboard 4/2022
+#define SMALL_PCB_V1   // For the small motherboard 4/2022
 
 // -----------------------------------------------------------------------------------------//
 // Vars from main program.  Eventually pass these into function at run time.
@@ -76,7 +79,7 @@ extern struct New_Spectrum_Layout   Custom_Layout[1];
 #ifdef USE_RA8875
   #define  SCREEN_WIDTH       800 
   #define  SCREEN_HEIGHT      480
-  //#define  RA8875_INT        14   //any pin
+  //#define  RA8875_INT        14   //any pin, 27 on Johns large V1 board. 28 on the small V1 board
   //#define  RA8875_CS         10   //any digital pin
   //#define  RA8875_RESET      9    //any pin or nothing!
   //#define  MAXTOUCHLIMIT     3    //1...5  using 3 for 3 finger swipes, otherwise 2 for pinches or just 1 for touch
@@ -93,7 +96,13 @@ extern struct New_Spectrum_Layout   Custom_Layout[1];
   #define  SCREEN_HEIGHT      600
   #include <RA8876_t3.h>           // Github
   #include <FT5206.h>
-  #define  CTP_INT           14   // Use an interrupt capable pin such as pin 2 (any pin on a Teensy)
+  #ifdef SMALL_PCB_V1
+      #define  CTP_INT        28  //28 for John's small V1 motherboard
+  #elif LARGE_PCB_V1
+      #define  CTP_INT        27  //27 for John's larger 4.3" motherboard
+  #else
+      #define  CTP_INT        14  //14 for K7MDL old prototype board
+  #endif
   #define  RA8876_CS         10   //any digital pin
   #define  RA8876_RESET      9    //any pin or nothing!
   #define  MAXTOUCHLIMIT     3    //1...5  using 3 for 3 finger swipes, otherwise 2 for pinches or just 1 for touch
