@@ -55,7 +55,7 @@
 
 // uncomment one of these to account for Touch interrupt differences.  
 // If not using either board, comment them both out to use the default old values
-#define LARGE_PCB_V1   // For the V1 large 4.3" motherboard 4/2022
+//#define LARGE_PCB_V1   // For the V1 large 4.3" motherboard 4/2022
 //#define SMALL_PCB_V1   // For the small motherboard 4/2022
 
 // -----------------------------------------------------------------------------------------//
