@@ -4,6 +4,8 @@ Teensy 4 SDR Hi-Res Spectrum and Waterfall Library
 This library was created for the SDR_RA887x SDR radio project based on a Teensy 4 CPU and SGTL5000 audio backpack card.
 https://github.com/K7MDL2/KEITHSDR
 
+**** NOTE ***** As of May 7, 2022 builds of SDR_RA887x project, I have moved these files into the project sketch folder to get better control of #defines for board, display and FFT types. Previously you had to set the same #defines in both the RadioConfig.h and this library. These files are now in regular .h and .ccp form distributed with SDR_RA8875 on Github here.  You do not need this library any more (FOR BUILDSs May 7, 2022 AND LATER).
+
 This evolved under the KeithsSDR project as a hi-res alternative to the original simpler version still supported in that project. It has been transformed into a separate library.  Teh example program has nto been upadted yet for the expanded args list using in varios functions.  Lots of opportunity to simplify some things like RA8875 vs Ra8876 display selection. 
 
 Zoom is accomplished internally by selecting the FFT size (1024, 2048, 4096).  Each FFT bin is mapped 1:1 to a display pixel.  The RA8876 7" display used is 1024px wide, the RA8875 4.3" display used is 800px wide, minus a few px for borders.  Pan slides a 1024px (or 800px) window over array of FFT data (4096bins for 4x zoom, 2048 for 2x zoom or 1024 for 1X zoom).
