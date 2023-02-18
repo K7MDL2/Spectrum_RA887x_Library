@@ -2,7 +2,6 @@
 #define _SPECTRUM_WATERFALL_H_
 
 //      SPECTRUM-WATERFALL.h
-//      https://github.com/K7MDL2/Spectrum_RA887x_Library
 //
 //  This is an example file how to use the Spectrum_RA887x library to display a custom
 //  sized window containing a sepctrum display and a waterfall display.
@@ -53,7 +52,7 @@
 
 
 // Choose line in or a test sinewave to display something when there is no audio input for the FFT to look at
-#define TEST_SINE
+//#define TEST_SINE
 
 //--------------------------------- RA8875 LCD TOUCH DISPLAY INIT & PINS --------------------------
 //
@@ -76,16 +75,25 @@
                             // Most radio IFs are inverted, though it can change depending on frequency
                             // Enabled only when the PANADAPTER define is active. Can be left uncommented.
 
-#define SCREEN_ROTATION   0 // 0 is normal horizontal landscape orientation  For RA8876 only at this point.
+#define SCREEN_ROTATION   2 // 0 is normal horizontal landscape orientation  For RA8876 only at this point.
                             // 2 is 180 flip.  This will affect the touch orientation so that must be set to match your display
                             // The 7" RA8876 display has a better off-center viewing angle when horizantal when the touch panel ribbon is at the top.  This requires the touch to be rotated.
                             // The rotation will be 0, touch rotation will be "defined"
                             // When the 7" is vertically mounted the ribbon should be down with Touch Rotation "undefined".
 
-#define USE_RA8875          // Turns on support for RA8875 LCD Touchscreen Display with FT5204 Touch controller
+//#define USE_RA8875          // Turns on support for RA8875 LCD Touchscreen Display with FT5204 Touch controller
                             // When commented out it will default to the RA8876 controller and FT5206 touch controller
                             // DEPENDS on correct display controller type connected via 4-wire SPI bus.
                             // UN-comment this line to use RA8876  *** AND in the Spectrum_RA887x.h ***
+
+// --------------- Motherboard/Protoboard version --------------------------
+// Uncomment one of these to account for Touch interrupt differences, or
+// if not using any of these boards, comment them all out to use the default old values
+//#define SMALL_PCB_V1 // For the   small motherboard 4/18/2022
+//#define V1_4_3_PCB   // For the V1 4.3" motherboard 4/18/2022
+//#define V2_4_3_PCB   // For the V2 4.3" motherboard 4/21/2022
+//#define V21_7_PCB    // For the V2.1 7" motherboard 12/30/2022
+#define V22_7_PCB    // For the V2.1 7" motherboard 12/30/2022
 
 //==================================== Frequency Set ==========================================
 #ifdef PANADAPTER
@@ -136,7 +144,7 @@
 #ifdef USE_RA8875
   #define  SCREEN_WIDTH      800 
   #define  SCREEN_HEIGHT     480
-  #define  RA8875_INT        27   // 14 for old proto boards, 27 or 28 for large and small V1 PCBs
+  #define  RA8875_INT        14   //any pin
   #define  RA8875_CS         10   //any digital pin
   #define  RA8875_RESET      9    //any pin or nothing!
   #define  MAXTOUCHLIMIT     3    //1...5  using 3 for 3 finger swipes, otherwise 2 for pinches or just 1 for touch
@@ -158,7 +166,13 @@
   #include <ili9488_t3_font_ArialBold.h>  // https://github.com/PaulStoffregen/ILI9341_t3
   #include <RA8876_t3.h>           // Github
   #include <FT5206.h>
-  #define  CTP_INT           28   // 14 for old proto boards, 27 or 28 for large and small V1 PCBs
+  #if defined SMALL_PCB_V1
+    #define  CTP_INT        28  //for John's small V1 motherboard
+  #elif definedV1_4_3_PCB || defined V2_4_3_PCB || defined V21_7_PCB || defined V22_7_PCB
+    #define  CTP_INT        27  // for John's larger 4.3" motherboard
+  #else
+    #define  CTP_INT        14  //14 for K7MDL old prototype board
+  #endif
   #define  RA8876_CS         10   //any digital pin
   #define  RA8876_RESET      9    //any pin or nothing!
   #define  MAXTOUCHLIMIT     3    //1...5  using 3 for 3 finger swipes, otherwise 2 for pinches or just 1 for touch
@@ -167,5 +181,15 @@
 bool        enable_printCPUandMemory = false;
 void        togglePrintMemoryAndCPU(void) { enable_printCPUandMemory = !enable_printCPUandMemory; };
 int32_t     Freq_Peak = 0;
+
+// Choose 1024, 2048, or 4096  for AUDIO audio output- usually defined in the main program
+#define FFT_SIZE            4096
+
+// --->>>> Enable one or more FFT pipelines for 2nd window, pan and zoom, if used
+// At least one must match FFT_SIZE
+#define FFT_4096
+#define FFT_2048
+#define FFT_1024
+// --->>>><<<<<---- //
 
 #endif  // end of SPECTRUM_WATERFALL

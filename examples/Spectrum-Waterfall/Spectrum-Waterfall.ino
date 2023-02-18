@@ -8,63 +8,14 @@
 //  displays possible without undue burden on the host CPU.   
 //  This allows CPU cycles to handle other tasks like audio processing and encoders.
 //
-//  If you have a RX board connected with a PLL, you can add VFO config code and see radio signal on the screen.
-//   Without a RX and PLL, you will see a blank Spectrum (upper half) and a scrolling waterfall (lower half) with no signals.
-//
-//
 
 #include "Spectrum-Waterfall.h"
-
-#ifdef USE_RA8875
-  RA8875 tft = RA8875(RA8875_CS,RA8875_RESET); //initiate the display object
-#else
-  RA8876_t3 tft = RA8876_t3(RA8876_CS,RA8876_RESET); //initiate the display object
-  FT5206 cts = FT5206(CTP_INT);   // Touch controller interrupt pin.  Set for your PCB version.  14, 27 and 28 are known options so far.
-#endif
-//
-//============================================ End of Spectrum Setup Section =====================================================
-//
 
 void I2C_Scanner(void);
 void printHelp(void);
 void printCPUandMemory(unsigned long curTime_millis, unsigned long updatePeriod_millis);
 void respondToByte(char c);
 const char* formatVFO(uint32_t vfo);
-
-// User program would supply this to describe the screen layout
-struct Spectrum_Parms Sp_Parms_Def[1] = { // define default sets of spectrum window parameters, mostly for easy testing but could be used for future custom preset layout options
-  //W LE  RE  CG x   y   w  h  c sp st clr sc mode scal reflvl wfrate
-  #ifdef USE_RA8875
-    {798,0, 0,  0,798,398,14,8,157,179,179,408,400,110,111,289,289,  0,153,799,256,50,20,6,240,1.0,0.9,1,20, 8, 70},
-  #else
-    {1020,1,1,  1,1021,510,14,8,143,165,165,528,520,142,213,307,307,  0,139,1022,390,40,20,6,890,1.5,0.9,1,20,10, 80},
-  #endif
-};
-
-// User program only needs to edit this to create new layout records you can add to the above table.
-// Not used in this example sicnce 1 layout is provided above for 1x 4.3" and 1x 7" screen.
-struct New_Spectrum_Layout Custom_Layout[1] = {      // Temp storage for generating new layouts    
-    0,        // spectrum_x >  0 to width of display - window width. Must fit within the button frame edges left and right
-                    // ->Pay attention to the fact that position X starts with 0 so 100 pixels wide makes the right side value of x=99.
-    153,      // spectrum_y0 to vertical height of display - height of your window. Odd Numbers are best if needed to make the height an even number and still fit on the screen
-    256,      // spectrum_height Total height of the window. Even numbers are best. (height + Y) cannot exceed height of the display or the window will be off screen.
-    50,       // spectrum_center Value 0 to 100.  Smaller value = biggger waterfall. Specifies the relative size (%) between the spectrum and waterfall areas by moving the dividing line up or down as a percentage
-                    // Smaller value makes spectrum smaller, waterfall bigger
-    799,      // spectrum_width Total width of window. Even numbers are best. 552 is minimum to fit a full 512 pixel graph plus the min 20 pixel border used on each side. Can be smaller but will reduce graph area
-    20,       // spectrum_span Value in KHz.  Ths will be the maximum span shown in the display graphs.  
-                    // The graph code knows how many Hz per bin so will scale down to magnify a smaller range.
-                    // Max value and resolutoin (pixels per bin) is dependent on sample frequency
-                    // 25000 is max for 1024 FFT with 500 bins at 1:1 bins per pixel
-                    // 12500 would result in 2 pixels per bin. Bad numbers here should be corrected to best fit by the function
-    2,        // spectrum_wf_style Range 1- 6. Specifies the Waterfall style.
-    330,      // spectrum_wf_colortemp Range 1 - 1023. Specifies the waterfall color temperature to tune it to your liking
-    1.0,      // spectrum_wf_scal e0.0f to 40.0f. Specifies thew waterfall zoom level - may be redundant when Span is worked out later.
-    0.9,      // spectrum_LPFcoeff 1.0f to 0.0f. Data smoothing
-    1,        // spectrum_dot_bar_mode 0=bar, 1=Line. Spectrum box
-    40,       // spectrum_sp_scale 10 to 80. Spectrum scale factor in dB. This is the height of the scale (if possible by windows sizes). Will plot the spectrum window of values between the floor and the scale value creating a zoom effect.
-    -175,     // spectrum_floor 0 to -150. The reference point for plotting values.  Anything signal value > than this (less negative) will be plotted until stronger than the window height*scale factor.
-    70        // spectrum_wf_rate window update rate in ms.  25 is fast enough to see dit and dahs well    
-};
 
 // -------------------------------------------------------------------------------------------
 // Audio Library setup stuff to provide FFT data with optional Test tone
@@ -82,18 +33,66 @@ const int audio_block_samples = 128;          // do not change this!
 AudioSettings_F32 audio_settings(sample_rate_Hz, audio_block_samples);
 
 // used for spectrum object
-#define FFT_SIZE                  4096            // Need a constant for array size declarion so manually set this value here.  Could try a macro later
-int16_t         fft_bins            = FFT_SIZE;     // Number of FFT bins which is FFT_SIZE/2 for real version or FFT_SIZE for iq version
-float           fft_bin_size        = sample_rate_Hz/(FFT_SIZE*2);   // Size of FFT bin in HZ.  From sample_rate_Hz/FFT_SIZE for iq
+//#define FFT_SIZE                  4096            // Need a constant for array size declarion so manually set this value here.  Could try a macro later
+uint16_t        fft_size            = FFT_SIZE;       // This value will be passed to the init function.
+int16_t         fft_bins            = (int16_t) fft_size;     // Number of FFT bins which is FFT_SIZE/2 for real version or FFT_SIZE for iq version
+float32_t       fft_bin_size        = sample_rate_Hz/(FFT_SIZE*2);   // Size of FFT bin in HZ.  From sample_rate_Hz/FFT_SIZE for iq
 int16_t         spectrum_preset     = 0;                    // Specify the default layout option for spectrum window placement and size.
 extern Metro    spectrum_waterfall_update;          // Timer used for controlling the Spectrum module update rate.
-extern struct   Spectrum_Parms Sp_Parms_Def[];
+
+
+// The main program should define at least 1 layout record based on this structure.
+// Here is a working example usually placed in your main program header files.
+#define PRESETS 1 // number of struct records for Sp_Parms_Def, the defaults table. You can override this with a table in EEPROM someday
+struct Spectrum_Parms Sp_Parms_Def[PRESETS] = { // define default sets of spectrum window parameters, mostly for easy testing but could be used for future custom preset layout options
+  //W LE  RE  CG x   y   w  h  c sp st clr sc mode scal reflvl wfrate
+  #ifdef USE_RA8875
+    {798,0, 0,  0,798,398,14,8,157,179,179,408,400,110,111,289,289,  0,153,799,256,50,20,6,240,1.0,0.9,1,20, 8, 70},
+  #else
+    {1020,1,1,  1,1021,510,14,8,143,165,165,528,520,142,213,307,307,  0,139,1022,390,40,20,6,890,1.5,0.9,1,20,10, 80},
+  #endif
+};
+//extern struct   Spectrum_Parms Sp_Parms_Def[];
+struct New_Spectrum_Layout   Custom_Layout[1];
+
+
+// Display type set in .h file
+Spectrum_RA887x spectrum_RA887x(fft_size, fft_bins, fft_bin_size);   // initialize the Spectrum Library
+#ifdef USE_RA8875
+  RA8875 tft = RA8875(RA8875_CS,RA8875_RESET); //initiate the display object
+#else
+  RA8876_t3 tft = RA8876_t3(RA8876_CS,RA8876_RESET); //initiate the display object
+  FT5206 cts = FT5206(CTP_INT); 
+#endif
+//
+//============================================ End of Spectrum Setup Section =====================================================
+//
 
 const int myInput = AUDIO_INPUT_LINEIN;
 //const int myInput = AUDIO_INPUT_MIC;
-                            
+
+#ifdef BETATEST
+  DMAMEM  float32_t  fftOutput[4096];  // Array used for FFT Output to the INO program
+  DMAMEM  float32_t  window[2048];     // Windows reduce sidelobes with FFT's *Half Size*
+  DMAMEM  float32_t  fftBuffer[8192];  // Used by FFT, 4096 real, 4096 imag, interleaved
+  DMAMEM  float32_t  sumsq[4096];      // Required ONLY if power averaging is being done
+#endif
+
+#ifdef FFT_4096
+  #ifndef BETATEST
+    DMAMEM  AudioAnalyzeFFT4096_IQ_F32  myFFT_4096;  // choose which you like, set FFT_SIZE accordingly.
+  #else
+    AudioAnalyzeFFT4096_IQEM_F32 myFFT_4096(fftOutput, window, fftBuffer, sumsq);  // with power averaging array 
+  #endif
+#endif
+#ifdef FFT_2048   
+  DMAMEM AudioAnalyzeFFT2048_IQ_F32  myFFT_2048;
+#endif
+#ifdef FFT_1024
+  DMAMEM AudioAnalyzeFFT1024_IQ_F32  myFFT_1024;
+#endif
+
 AudioInputI2S_F32           Input(audio_settings);
-AudioAnalyzeFFT4096_IQ_F32  myFFT;  // choose which you like, set FFT_SIZE accordingly.
 AudioMixer4_F32             FFT_Switch1(audio_settings);
 AudioMixer4_F32             FFT_Switch2(audio_settings);
 AudioOutputI2S_F32          Output(audio_settings);
@@ -119,13 +118,27 @@ AudioConnection_F32         patchCord7a(Input,0,         FFT_Switch1,0);
 AudioConnection_F32         patchCord7b(Input,1,         FFT_Switch2,0);
 AudioConnection_F32         patchCord6a(Input,0,         FFT_Switch1,1);
 AudioConnection_F32         patchCord6b(Input,1,         FFT_Switch2,1);
-// Pass audio to the FFT to create data for our spectrum
-AudioConnection_F32         patchCord5a(FFT_Switch1,0,   myFFT,0);
-AudioConnection_F32         patchCord5b(FFT_Switch2,0,   myFFT,1);
+// One or more of these FFT pipelines can be used, most likely for pan and zoom.  Normally just 1 is used.
+#ifdef FFT_4096
+    AudioConnection_F32     patchCord_FFT_L_4096(FFT_Switch1,0,             myFFT_4096,0);   // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_4096(FFT_Switch2,0,             myFFT_4096,1);
+#endif
+#ifdef FFT_2048
+    AudioConnection_F32     patchCord_FFT_L_2048(FFT_Switch1,1,             myFFT_2048,0);        // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_2048(FFT_Switch2,1,             myFFT_2048,1);
+#endif
+#ifdef FFT_1024
+    AudioConnection_F32     patchCord_FFT_L_1024(FFT_Switch1,2,             myFFT_1024,0);        // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_1024(FFT_Switch2,2,             myFFT_1024,1);
+#endif
 
 AudioControlSGTL5000    codec1;
 
-Spectrum_RA887x spectrum_RA887x(0, FFT_SIZE);     // initialize the Spectrum Librar
+int32_t rit_offset = 0; // account for RIT freqwuency offset over VFO base value
+int32_t ModeOffset = 0; // typically 0 for non CW modes, pitch value for CW, 600 for example centers the shaded filter over the VFO
+uint16_t filterBandwidth = 2700;
+uint16_t filterCenter = filterBandwidth/2 + 100;
+float pan = 0;
 
 void setup()
 {
@@ -143,9 +156,20 @@ void setup()
         Serial.println(F("Initializing RA8875 Display"));
         tft.begin(RA8875_800x480);
         tft.setRotation(SCREEN_ROTATION); // 0 is normal, 1 is 90, 2 is 180, 3 is 270 degrees
+        delay(20);
+        #if defined(USE_FT5206_TOUCH)
+          tft.useCapINT(RA8875_INT);
+          tft.setTouchLimit(MAXTOUCHLIMIT);
+          tft.enableCapISR(true);
+          tft.setTextColor(WHITE, BLACK);
+        #else
+          #ifdef USE_RA8875
+              tft.print("you should open RA8875UserSettings.h file and uncomment USE_FT5206_TOUCH!");
+          #endif  // USE_RA8875
+        #endif // USE_FT5206_TOUCH
     #else 
         Serial.println(F("Initializing RA8876 Display"));   
-        tft.begin(30000000UL);
+        tft.begin(50000000UL);
         cts.begin();
         cts.setTouchLimit(MAXTOUCHLIMIT);
         tft.touchEnable(false);   // Ensure the resitive ocntroller, if any is off
@@ -165,43 +189,74 @@ void setup()
         tft.selectScreen(0);  // Select screen page 0
         tft.fillScreen(BLACK);
         tft.setBackGroundColor(BLACK);
-        tft.setTextColor(RA8875_WHITE, RA8875_BLACK);
+        tft.setTextColor(WHITE, BLACK);
         tft.backlight(true);
         tft.displayOn(true);
         tft.setRotation(SCREEN_ROTATION); // 0 is normal, 1 is 90, 2 is 180, 3 is 270 degrees.  
                         // RA8876 touch controller is upside down compared to the RA8875 so correcting for it there.
     #endif
     
-    #if defined(USE_FT5206_TOUCH)
-        tft.useCapINT(RA8875_INT);
-        tft.setTouchLimit(MAXTOUCHLIMIT);
-        tft.enableCapISR(true);
-        tft.setTextColor(RA8875_WHITE, RA8875_BLACK);
-    #else
-        #ifdef USE_RA8875
-            tft.print("you should open RA8875UserSettings.h file and uncomment USE_FT5206_TOUCH!");
-        #endif  // USE_RA8875
-    #endif // USE_FT5206_TOUCH
-    
     spectrum_RA887x.initSpectrum(spectrum_preset); // Call before initDisplay() to put screen into Layer 1 mode before any other text is drawn!
 
-    initDSP();
+    //--------------------------   Setup our Audio System -------------------------------------
+
+    AudioMemory_F32(100, audio_settings);
+    codec1.enable(); // MUST be before inputSelect()
+    delay(5);
+    codec1.dacVolumeRampDisable(); // Turn off the sound for now
+    codec1.inputSelect(myInput);
+    codec1.lineInLevel(5);  // set for your hardware
+    codec1.lineOutLevel(18); // range 13 to 31.  13 => 3.16Vp-p, 31=> 1.16Vp-p
+    codec1.autoVolumeControl(2, 0, 0, -36.0, 12, 6);                   // add a compressor limiter
+    //codec1.autoVolumeControl( 0-2, 0-3, 0-1, 0-96, 3, 3);
+    //autoVolumeControl(maxGain, response, hardLimit, threshold, attack, decay);
+    codec1.autoVolumeEnable(); // let the volume control itself..... poor mans agc
+    //codec1.autoVolumeDisable();// Or don't let the volume control itself
+    codec1.muteLineout(); //mute the audio output until we finish thumping relays 
+    codec1.adcHighPassFilterDisable();
+    codec1.dacVolume(0); // set the "dac" volume (extra control)
+
+    #ifdef TEST_SINE
+    // Insert a test tone to see something on the display.
+    float sinewave_vol = 0.001;
+    sinewave1.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
+    sinewave1.frequency(1000.000); // Tone Frequency in Hz
+    sinewave2.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
+    sinewave2.frequency(4000.000); // Tone Frequency in Hz
+    #endif
+    
+    // Select our sources for the FFT.  mode.h will change this so CW uses the output (for now as an experiment)
+    AudioNoInterrupts();
+    FFT_Switch1.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+    FFT_Switch1.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
+    FFT_Switch2.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+    FFT_Switch2.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
+    #ifdef TEST_SINE
+      FFT_Switch1.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch1.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+    #else
+      FFT_Switch1.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch1.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+    #endif
+    AudioInterrupts();
     
     // -------------------- Setup our radio settings and UI layout --------------------------------
 
     spectrum_preset = 0;    
-
-    spectrum_RA887x.Spectrum_Parm_Generator(0, 0); // use this to generate new set of params for the current window size values. 
-                                                              // 1st arg is new target layout record - usually 0 unless you create more examples
-                                                              // 2nd arg is current empty layout record (preset) value - usually 0
+    spectrum_RA887x.Spectrum_Parm_Generator(0, spectrum_preset, fft_bins); // use this to generate new set of params for the current window size values. 
+                                                              // 1st arg is target, 2nd arg is current value
                                                               // calling generator before drawSpectrum() will create a new set of values based on the globals
-                                                              // Generator only reads the global values, it does not change them or the database, just prints the new params                                                             
+                                                              // Generator only reads the global values, it does not change them or the database, just prints the new params
     spectrum_RA887x.drawSpectrumFrame(spectrum_preset); // Call after initSpectrum() to draw the spectrum object.  Arg is 0 PRESETS to load a preset record
                                                               // DrawSpectrum does not read the globals but does update them to match the current preset.
                                                               // Therefore always call the generator before drawSpectrum() to create a new set of params you can cut anmd paste.
                                                               // Generator never modifies the globals so never affects the layout itself.
                                                               // Print out our starting frequency for testing
-    //sp.drawSpectrumFrame(6);   // for 2nd window
+    //sp.drawSpectrumFrame(6);   // for 2nd window using a new paramer record
     
     Serial.print(F("\nInitial Dial Frequency is "));
     Serial.print(formatVFO(VFOA));
@@ -236,12 +291,25 @@ static uint32_t delta = 0;
 void loop()
 {
     static uint32_t time_old = 0;
-    
+
     // Update spectrum and waterfall based on timer
     if (spectrum_waterfall_update.check() == 1) // The update rate is set in drawSpectrumFrame() with spect_wf_rate from table
     {
-      spectrum_RA887x.spectrum_update(spectrum_preset, 1, VFOA, VFOB); // valid numbers are 0 through PRESETS to index the record of predefined window layouts
-      // spectrum_RA887x.spectrum_update(6, 1, VFOA, VFOB);  // for 2nd window
+        Freq_Peak = spectrum_RA887x.spectrum_update(
+            0,                 // index to spectrum profile records, using record 0 here
+            1,                 // VFOA active = 1, VFOB is 0 (deleted in modern version)
+            VFOA + rit_offset, // for onscreen freq info
+            VFOB,              // Not really needed today, spectrum never shows B, only the active
+            ModeOffset,        // Move spectrum cursor to center or offset it by pitch value when in CW modes
+            filterCenter,      // Center the on screen filter shaded area
+            filterBandwidth,   // Display the filter width on screen
+            pan,               // Pannng offset from center frequency
+            fft_bins,          // use this size to display for simple zoom effect
+            fft_bins,          // pass along the calculated bin size
+            fft_bin_size       // pass along the number of bins.  FOr IQ FFTs, this is fft_size, else fft_size/2
+        ); 
+      //Spectrum_RA887x::spectrum_update(int16_t s, int16_t VFOA_YES, int32_t VfoA, int32_t VfoB, int32_t Offset, uint16_t filterCenter, uint16_t filterBandwidth, float pan, uint16_t fft_sz, float fft_bin_sz, int16_t fft_binc)
+      
     }
     
     // Time stamp our program loop time for performance measurement
@@ -515,59 +583,3 @@ void printHelp(void)
     Serial.println(F("   M: Print Detailed Memory Region Usage Report"));
     Serial.println(F("   T+10 digits: Time Update. Enter T and 10 digits for seconds since 1/1/1970"));
 }
-
-//--------------------------   Setup our Audio System -------------------------------------
-void initDSP()
-{
-    AudioMemory_F32(100, audio_settings);
-    codec1.enable(); // MUST be before inputSelect()
-    delay(5);
-    codec1.dacVolumeRampDisable(); // Turn off the sound for now
-    codec1.inputSelect(myInput);
-    codec1.lineOutLevel(13); // range 13 to 31.  13 => 3.16Vp-p, 31=> 1.16Vp-p
-    codec1.autoVolumeControl(2, 0, 0, -36.0, 12, 6);                   // add a compressor limiter
-    //codec1.autoVolumeControl( 0-2, 0-3, 0-1, 0-96, 3, 3);
-    //autoVolumeControl(maxGain, response, hardLimit, threshold, attack, decay);
-    codec1.autoVolumeEnable(); // let the volume control itself..... poor mans agc
-    //codec1.autoVolumeDisable();// Or don't let the volume control itself
-    codec1.muteLineout(); //mute the audio output until we finish thumping relays 
-    codec1.adcHighPassFilterDisable();
-    codec1.dacVolume(0); // set the "dac" volume (extra control)
-
-    #ifdef TEST_SINE
-    // Insert a test tone to see something on the display.
-    float sinewave_vol = 0.001;
-    sinewave1.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
-    sinewave1.frequency(1000.000); // Tone Frequency in Hz
-    sinewave2.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
-    sinewave2.frequency(4000.000); // Tone Frequency in Hz
-    #endif
-    
-    // Select our sources for the FFT.  mode.h will change this so CW uses the output (for now as an experiment)
-    AudioNoInterrupts();
-    FFT_Switch1.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
-    FFT_Switch1.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
-    FFT_Switch2.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
-    FFT_Switch2.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
-    #ifdef TEST_SINE
-      FFT_Switch1.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch1.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-    #else
-      FFT_Switch1.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch1.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-    #endif
-    AudioInterrupts();
-    
-    // Choose our output type.  Can do dB, RMS or power
-    myFFT.setOutputType(FFT_DBFS); // FFT_RMS or FFT_POWER or FFT_DBFS
-    // Uncomment one these to try other window functions
-    //  myFFT.windowFunction(NULL);
-    //  myFFT.windowFunction(AudioWindowBartlett1024);
-    //  myFFT.windowFunction(AudioWindowFlattop1024);
-    myFFT.windowFunction(AudioWindowHanning1024);
-    myFFT.setNAverage(3); // experiment with this value.  Too much causes a large time penalty
-  }
