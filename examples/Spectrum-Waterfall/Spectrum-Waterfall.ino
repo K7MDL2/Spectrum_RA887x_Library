@@ -48,12 +48,12 @@ extern Metro    spectrum_waterfall_update;          // Timer used for controllin
 // Here is a working example usually placed in your main program header files.
 #define PRESETS 1 // number of struct records for Sp_Parms_Def, the defaults table. You can override this with a table in EEPROM someday
 struct Spectrum_Parms Sp_Parms_Def[PRESETS] = { // define default sets of spectrum window parameters, mostly for easy testing but could be used for future custom preset layout options
-  //W LE  RE  CG x   y   w  h  c sp st clr sc mode scal reflvl wfrate
-  #ifdef USE_RA8875
-    {798,0, 0,  0,798,398,14,8,157,179,179,408,400,110,111,289,289,  0,153,799,256,50,20,6,240,1.0,0.9,1,20, 8, 70},
-  #else
-    {1020,1,1,  1,1021,510,14,8,143,165,165,528,520,142,213,307,307,  0,139,1022,390,40,20,6,890,1.5,0.9,1,20,10, 80},
-  #endif
+        //W        LE  RE CG                                                    x   y   w  h  c sp st clr sc mode      scal reflvl wfrate
+    #ifdef USE_RA8875
+        {798,0, 0,  0, 798,398,14,8,157,179,179,408,400,110,111,289,289,  0,153,799,256,50,20,6,240,1.0,0.9,1,20, 5, 30}      // Default layout for 4.3" RA8875 800 x480
+    #else
+        {1022,1,1,  1,1022,510,14,8,143,165,165,528,520,142,213,307,307,  0,139,1023,390,40,20,6,890,1.5,0.9,1,20,10, 30}   // Default layout for 7" RA8876 1024 x 600
+    #endif        
 };
 //extern struct   Spectrum_Parms Sp_Parms_Def[];
 struct New_Spectrum_Layout   Custom_Layout[1];
