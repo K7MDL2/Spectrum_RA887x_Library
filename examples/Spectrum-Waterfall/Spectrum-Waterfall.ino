@@ -16,27 +16,29 @@ void printHelp(void);
 void printCPUandMemory(unsigned long curTime_millis, unsigned long updatePeriod_millis);
 void respondToByte(char c);
 const char* formatVFO(uint32_t vfo);
+void Change_FFT_Size(uint16_t new_size, float new_sample_rate_Hz);
 
 // -------------------------------------------------------------------------------------------
 // Audio Library setup stuff to provide FFT data with optional Test tone
 // -------------------------------------------------------------------------------------------
-//const float sample_rate_Hz = 11000.0f;  //43Hz /bin  5K spectrum
-//const float sample_rate_Hz = 22000.0f;  //21Hz /bin 6K wide
-//const float sample_rate_Hz = 44100.0f;  //43Hz /bin  12.5K spectrum
-//const float sample_rate_Hz = 48000.0f;  //46Hz /bin  24K spectrum for 1024.  
-//const float sample_rate_Hz = 51200.0f;  // 50Hz/bin for 1024, 200Hz/bin for 256 FFT. 20Khz span at 800 pixels 2048 FFT
-const float sample_rate_Hz = 102400.0f;   // 100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
-//const float sample_rate_Hz = 192000.0f; // 190Hz/bin - does
-//const float sample_rate_Hz = 204800.0f; // 200/bin at 1024 FFT
+//float32_t sample_rate_Hz = 11000.0f;  //43Hz /bin  5K spectrum
+//float32_t sample_rate_Hz = 22000.0f;  //21Hz /bin 6K wide
+//float32_t sample_rate_Hz = 44100.0f;  //43Hz /bin  12.5K spectrum
+//float32_t sample_rate_Hz = 48000.0f;  //46Hz /bin  24K spectrum for 1024.  
+//float32_t sample_rate_Hz = 51200.0f;  // 50Hz/bin for 1024, 200Hz/bin for 256 FFT. 20Khz span at 800 pixels 2048 FFT
+float32_t sample_rate_Hz = 96000.0f;   // <100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
+//float32_t sample_rate_Hz = 102400.0f;   // 100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
+//float32_t sample_rate_Hz = 192000.0f; // 190Hz/bin - does
+//float32_t sample_rate_Hz = 204800.0f; // 200/bin at 1024 FFT
 
 const int audio_block_samples = 128;          // do not change this!
 AudioSettings_F32 audio_settings(sample_rate_Hz, audio_block_samples);
 
 // used for spectrum object
-//#define FFT_SIZE                  4096            // Need a constant for array size declarion so manually set this value here.  Could try a macro later
+//#define FFT_SIZE                  4096           // set in .h
 uint16_t        fft_size            = FFT_SIZE;       // This value will be passed to the init function.
 int16_t         fft_bins            = (int16_t) fft_size;     // Number of FFT bins which is FFT_SIZE/2 for real version or FFT_SIZE for iq version
-float32_t       fft_bin_size        = sample_rate_Hz/(FFT_SIZE*2);   // Size of FFT bin in HZ.  From sample_rate_Hz/FFT_SIZE for iq
+float32_t       fft_bin_size        = sample_rate_Hz/(fft_size*2);   // Size of FFT bin in HZ.  From sample_rate_Hz/FFT_SIZE for iq
 int16_t         spectrum_preset     = 0;                    // Specify the default layout option for spectrum window placement and size.
 extern Metro    spectrum_waterfall_update;          // Timer used for controlling the Spectrum module update rate.
 
@@ -92,50 +94,55 @@ const int myInput = AUDIO_INPUT_LINEIN;
   DMAMEM AudioAnalyzeFFT1024_IQ_F32  myFFT_1024;
 #endif
 
+struct levels* pLevelData;
+uint32_t writeOne = 0;
+uint32_t cntFFT = 0;
+radioCESSB_Z_transmit_F32   cessb1(audio_settings);
 AudioInputI2S_F32           Input(audio_settings);
 AudioMixer4_F32             FFT_Switch1(audio_settings);
 AudioMixer4_F32             FFT_Switch2(audio_settings);
 AudioOutputI2S_F32          Output(audio_settings);
+AudioSwitch4_OA_F32         FFT_OutSwitch_I(audio_settings); // Select a source to send to the FFT engine
+AudioSwitch4_OA_F32         FFT_OutSwitch_Q(audio_settings);
+AudioSynthWaveformSine_F32  sinewave1; // for audible alerts like touch beep confirmations
+AudioSynthWaveformSine_F32  sinewave2; // for audible alerts like touch beep confirmations
 
-#ifdef TEST_SINE
-// Connections for FFT Only - chooses either the input or the output to display in the spectrum plot
-  AudioSynthWaveformSine_F32  sinewave1; // for audible alerts like touch beep confirmations
-  AudioSynthWaveformSine_F32  sinewave2; // for audible alerts like touch beep confirmations
-  AudioConnection_F32     patchCord4w(sinewave1,0,  FFT_Switch1,2);
-  AudioConnection_F32     patchCord4x(sinewave2,0,  FFT_Switch1,3);
-  AudioConnection_F32     patchCord4y(sinewave1,0,  FFT_Switch2,2);
-  AudioConnection_F32     patchCord4z(sinewave2,0,  FFT_Switch2,3);
-  // patch through the sinewave to the headphones/lineout
-  AudioConnection_F32     patchCord4u(sinewave1,0,     Output,0);
-  AudioConnection_F32     patchCord4v(sinewave2,0,     Output,1);
-#else
-  // patch through the audio input to the headphones/lineout
-  AudioConnection_F32     patchCord4c(Input,0,     Output,0);
-  AudioConnection_F32     patchCord4d(Input,1,     Output,1);
-#endif
-// patch through the input to a audio switch to select combinations of audio in and test tone
-AudioConnection_F32         patchCord7a(Input,0,         FFT_Switch1,0);
-AudioConnection_F32         patchCord7b(Input,1,         FFT_Switch2,0);
-AudioConnection_F32         patchCord6a(Input,0,         FFT_Switch1,1);
-AudioConnection_F32         patchCord6b(Input,1,         FFT_Switch2,1);
+// Line Input
+AudioConnection_F32         patchCord7a(Input,0,          FFT_Switch1,0);
+AudioConnection_F32         patchCord7b(Input,1,          FFT_Switch2,0);
+
+// Send the test tone through a CESSB direct to the I and Q outputs 
+AudioConnection_F32         patchCord_Audio_Tone(sinewave1,0,     cessb1,0);    // CE SSB compression
+AudioConnection_F32         patchCord_Audio_Filter_L(cessb1,0,    FFT_Switch1,1); // fixed 2800Hz TX filter 
+AudioConnection_F32         patchCord_Audio_Filter_R(cessb1,1,    FFT_Switch2,1); // output is at -1350 from source so have to shift it up.
+
+
+AudioConnection_F32         patchCord8a(FFT_Switch1,0,         FFT_OutSwitch_I,0);  // if there is any filtering applied this will view the effect
+AudioConnection_F32         patchCord8b(FFT_Switch2,0,         FFT_OutSwitch_Q,0);
+
 // One or more of these FFT pipelines can be used, most likely for pan and zoom.  Normally just 1 is used.
 #ifdef FFT_4096
-    AudioConnection_F32     patchCord_FFT_L_4096(FFT_Switch1,0,             myFFT_4096,0);   // Route selected audio source to the FFT
-    AudioConnection_F32     patchCord_FFT_R_4096(FFT_Switch2,0,             myFFT_4096,1);
+    AudioConnection_F32     patchCord_FFT_L_4096(FFT_OutSwitch_I,0,             myFFT_4096,0);   // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_4096(FFT_OutSwitch_Q,0,             myFFT_4096,1);
 #endif
 #ifdef FFT_2048
-    AudioConnection_F32     patchCord_FFT_L_2048(FFT_Switch1,1,             myFFT_2048,0);        // Route selected audio source to the FFT
-    AudioConnection_F32     patchCord_FFT_R_2048(FFT_Switch2,1,             myFFT_2048,1);
+    AudioConnection_F32     patchCord_FFT_L_2048(FFT_OutSwitch_I,0,             myFFT_2048,0);        // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_2048(FFT_OutSwitch_Q,1,             myFFT_2048,1);
 #endif
 #ifdef FFT_1024
-    AudioConnection_F32     patchCord_FFT_L_1024(FFT_Switch1,2,             myFFT_1024,0);        // Route selected audio source to the FFT
-    AudioConnection_F32     patchCord_FFT_R_1024(FFT_Switch2,2,             myFFT_1024,1);
+    AudioConnection_F32     patchCord_FFT_L_1024(FFT_OutSwitch_I,2,             myFFT_1024,0);        // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_R_1024(FFT_OutSwitch_Q,2,             myFFT_1024,1);
 #endif
+
+// patch through the audio input to the headphones/lineout
+AudioConnection_F32         patchCord4c(FFT_Switch1,0,    Output,0);
+AudioConnection_F32         patchCord4d(FFT_Switch2,0,    Output,1);
 
 AudioControlSGTL5000    codec1;
 
 int32_t rit_offset = 0; // account for RIT freqwuency offset over VFO base value
-int32_t ModeOffset = 0; // typically 0 for non CW modes, pitch value for CW, 600 for example centers the shaded filter over the VFO
+int32_t ModeOffset = 1; // pitch value for CW, 600 for example centers the shaded filter over the VFO
+                        // -1 for LSB, +1 for USB, 0 for centered (AM)
 uint16_t filterBandwidth = 2700;
 uint16_t filterCenter = filterBandwidth/2 + 100;
 float pan = 0;
@@ -200,12 +207,13 @@ void setup()
 
     //--------------------------   Setup our Audio System -------------------------------------
 
+    AudioNoInterrupts();
     AudioMemory_F32(100, audio_settings);
     codec1.enable(); // MUST be before inputSelect()
     delay(5);
     codec1.dacVolumeRampDisable(); // Turn off the sound for now
     codec1.inputSelect(myInput);
-    codec1.lineInLevel(5);  // set for your hardware
+    codec1.lineInLevel(1);  //codec line in max level. Range 0 to 15.  0 => 3.12Vp-p, 15 => 0.24Vp-p high sensitivity
     codec1.lineOutLevel(18); // range 13 to 31.  13 => 3.16Vp-p, 31=> 1.16Vp-p
     codec1.autoVolumeControl(2, 0, 0, -36.0, 12, 6);                   // add a compressor limiter
     //codec1.autoVolumeControl( 0-2, 0-3, 0-1, 0-96, 3, 3);
@@ -216,38 +224,38 @@ void setup()
     codec1.adcHighPassFilterDisable();
     codec1.dacVolume(0); // set the "dac" volume (extra control)
 
-    #ifdef TEST_SINE
     // Insert a test tone to see something on the display.
-    float sinewave_vol = 0.001;
+    float sinewave_vol = 0.01;
     sinewave1.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
-    sinewave1.frequency(1000.000); // Tone Frequency in Hz
-    sinewave2.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
-    sinewave2.frequency(4000.000); // Tone Frequency in Hz
-    #endif
+    sinewave1.frequency(1000.0f); // Tone Frequency in Hz
+    //sinewave2.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
+    //sinewave2.frequency(4000.0f); // Tone Frequency in Hz
     
     // Select our sources for the FFT.  mode.h will change this so CW uses the output (for now as an experiment)
-    AudioNoInterrupts();
-    FFT_Switch1.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
-    FFT_Switch1.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
-    FFT_Switch2.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
-    FFT_Switch2.gain(1, 0.0f); //  1.0f is CW Filtered (output), 0.0f is off
     #ifdef TEST_SINE
-      FFT_Switch1.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch1.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(2, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(3, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-    #else
-      FFT_Switch1.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch1.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(2, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(3, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+      // shut off Inputs
+      FFT_Switch1.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      FFT_Switch2.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      // Turn on Tone
+      FFT_Switch1.gain(1, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(1, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+      #else
+      // Turn On Inputs
+      FFT_Switch1.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      FFT_Switch2.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      // Turn OFF Tone
+      FFT_Switch1.gain(1, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      FFT_Switch2.gain(1, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
     #endif
+
     AudioInterrupts();
     
+    Change_FFT_Size(fft_size, sample_rate_Hz);  // set 4096. 2048 or 1024 for FFT
+
     // -------------------- Setup our radio settings and UI layout --------------------------------
 
     spectrum_preset = 0;    
-    spectrum_RA887x.Spectrum_Parm_Generator(0, spectrum_preset, fft_bins); // use this to generate new set of params for the current window size values. 
+    spectrum_RA887x.Spectrum_Parm_Generator(0, 0, fft_bins); // use this to generate new set of params for the current window size values. 
                                                               // 1st arg is target, 2nd arg is current value
                                                               // calling generator before drawSpectrum() will create a new set of values based on the globals
                                                               // Generator only reads the global values, it does not change them or the database, just prints the new params
@@ -272,7 +280,7 @@ void setup()
     }
     else
     {
-        codec1.muteHeadphone();
+        //codec1.muteHeadphone();
     }
 
     //changeBands(0);     // Sets the VFOs to last used frequencies, sets preselector, active VFO, other last-used settings per band.
@@ -304,12 +312,11 @@ void loop()
             filterCenter,      // Center the on screen filter shaded area
             filterBandwidth,   // Display the filter width on screen
             pan,               // Pannng offset from center frequency
-            fft_bins,          // use this size to display for simple zoom effect
-            fft_bins,          // pass along the calculated bin size
-            fft_bin_size       // pass along the number of bins.  FOr IQ FFTs, this is fft_size, else fft_size/2
+            fft_size,          // use this size to display for simple zoom effect
+            fft_bin_size,      // pass along the calculated bin size
+            fft_bins           // pass along the number of bins.  FOr IQ FFTs, this is fft_size, else fft_size/2
         ); 
       //Spectrum_RA887x::spectrum_update(int16_t s, int16_t VFOA_YES, int32_t VfoA, int32_t VfoB, int32_t Offset, uint16_t filterCenter, uint16_t filterBandwidth, float pan, uint16_t fft_sz, float fft_bin_sz, int16_t fft_binc)
-      
     }
     
     // Time stamp our program loop time for performance measurement
@@ -582,4 +589,31 @@ void printHelp(void)
     Serial.println(F("   C: Toggle printing of CPU and Memory usage"));
     Serial.println(F("   M: Print Detailed Memory Region Usage Report"));
     Serial.println(F("   T+10 digits: Time Update. Enter T and 10 digits for seconds since 1/1/1970"));
+}
+
+//  Change FFT data source for zoom effects
+void Change_FFT_Size(uint16_t new_size, float new_sample_rate_Hz)
+{
+    fft_size       = new_size; //  change global size to use for audio and display
+    sample_rate_Hz = new_sample_rate_Hz;
+    fft_bin_size   = sample_rate_Hz / (fft_size * 2);
+
+    AudioNoInterrupts();
+    // Route selected FFT source to one of the possible many FFT processors - should save CPU time for unused FFTs
+    if (fft_size == 4096)
+    {
+        FFT_OutSwitch_I.setChannel(0); //  1 is 4096, 0 is Off
+        FFT_OutSwitch_Q.setChannel(0); //  1 is 4096, 0 is Off
+    }
+    else if (fft_size == 2048)
+    {
+        FFT_OutSwitch_I.setChannel(1); //  1 is 2048, 0 is Off
+        FFT_OutSwitch_Q.setChannel(1); //  1 is 2048, 0 is Off
+    }
+    else if (fft_size == 1024)
+    {
+        FFT_OutSwitch_I.setChannel(2); //  1 is 1024, 0 is Off
+        FFT_OutSwitch_Q.setChannel(2); //  1 is 1024, 0 is Off
+    }
+    AudioInterrupts();
 }
