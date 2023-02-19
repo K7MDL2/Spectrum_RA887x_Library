@@ -49,7 +49,7 @@
 #include <InternalTemperature.h>// V2.1.0 @ Github https://github.com/LAtimes2/InternalTemperature
 #include <TimeLib.h>            // TODO  - list where to find this
 #include <Metro.h>
-
+#include "Hilbert.h"            // filter coefficients
 
 // Choose line in or a test sinewave to display something when there is no audio input for the FFT to look at
 //#define TEST_SINE
@@ -94,6 +94,13 @@
 //#define V2_4_3_PCB   // For the V2 4.3" motherboard 4/21/2022
 //#define V21_7_PCB    // For the V2.1 7" motherboard 12/30/2022
 #define V22_7_PCB    // For the V2.1 7" motherboard 12/30/2022
+
+//#define W7PUA_I2S_CORRECTION  
+//
+// Can leave these 2 defined, no effect on other things.
+#define PIN_FOR_TP 22       // Teensy pin used for both Codec and I/O pin signal source methods (W7PUA I2S correction)
+#define SIGNAL_HARDWARE TP_SIGNAL_IO_PIN  // 10Kohm is for RS-HFIQ which has 100ohm output impedance.  Other audio sources may vary.
+// ---------------------------------------
 
 //==================================== Frequency Set ==========================================
 #ifdef PANADAPTER
@@ -191,5 +198,11 @@ int32_t     Freq_Peak = 0;
 #define FFT_2048
 #define FFT_1024
 // --->>>><<<<<---- //
+
+// Zoom level for UI control
+#define ZOOMx1      0       // Zoom out the most (fft1024 @ 48K) (aka OFF)  x1 reference
+#define ZOOMx2      1       // in between (fft2048)  is x2 of 1024
+#define ZOOMx4      2       // Zoom in the most (fft4096 at 96K)   is x4 of 1024
+#define ZOOM_NUM    3       // Number of zoom level choiced for menu system
 
 #endif  // end of SPECTRUM_WATERFALL

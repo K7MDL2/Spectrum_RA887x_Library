@@ -17,6 +17,7 @@ void printCPUandMemory(unsigned long curTime_millis, unsigned long updatePeriod_
 void respondToByte(char c);
 const char* formatVFO(uint32_t vfo);
 void Change_FFT_Size(uint16_t new_size, float new_sample_rate_Hz);
+void Zoom(uint8_t _zoom_Level);
 
 // -------------------------------------------------------------------------------------------
 // Audio Library setup stuff to provide FFT data with optional Test tone
@@ -24,9 +25,9 @@ void Change_FFT_Size(uint16_t new_size, float new_sample_rate_Hz);
 //float32_t sample_rate_Hz = 11000.0f;  //43Hz /bin  5K spectrum
 //float32_t sample_rate_Hz = 22000.0f;  //21Hz /bin 6K wide
 //float32_t sample_rate_Hz = 44100.0f;  //43Hz /bin  12.5K spectrum
-//float32_t sample_rate_Hz = 48000.0f;  //46Hz /bin  24K spectrum for 1024.  
+float32_t sample_rate_Hz = 48000.0f;  //46Hz /bin  24K spectrum for 1024.   ***** CESSB limited to 48Khz or so *********
 //float32_t sample_rate_Hz = 51200.0f;  // 50Hz/bin for 1024, 200Hz/bin for 256 FFT. 20Khz span at 800 pixels 2048 FFT
-float32_t sample_rate_Hz = 96000.0f;   // <100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
+//float32_t sample_rate_Hz = 96000.0f;   // <100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
 //float32_t sample_rate_Hz = 102400.0f;   // 100Hz/bin at 1024FFT, 50Hz at 2048, 40Khz span at 800 pixels and 2048FFT
 //float32_t sample_rate_Hz = 192000.0f; // 190Hz/bin - does
 //float32_t sample_rate_Hz = 204800.0f; // 200/bin at 1024 FFT
@@ -94,31 +95,43 @@ const int myInput = AUDIO_INPUT_LINEIN;
   DMAMEM AudioAnalyzeFFT1024_IQ_F32  myFFT_1024;
 #endif
 
-struct levels* pLevelData;
+// cessb parameters
+struct levelsZ* pLevelData;
 uint32_t writeOne = 0;
 uint32_t cntFFT = 0;
 radioCESSB_Z_transmit_F32   cessb1(audio_settings);
+
+// regular flow
 AudioInputI2S_F32           Input(audio_settings);
-AudioMixer4_F32             FFT_Switch1(audio_settings);
-AudioMixer4_F32             FFT_Switch2(audio_settings);
+AudioMixer4_F32             I_Switch(audio_settings);
+AudioMixer4_F32             Q_Switch(audio_settings);
 AudioOutputI2S_F32          Output(audio_settings);
 AudioSwitch4_OA_F32         FFT_OutSwitch_I(audio_settings); // Select a source to send to the FFT engine
 AudioSwitch4_OA_F32         FFT_OutSwitch_Q(audio_settings);
+DMAMEM AudioFilterFIR_F32   RX_Hilbert_Plus_45(audio_settings);
+DMAMEM AudioFilterFIR_F32   RX_Hilbert_Minus_45(audio_settings);
+AudioMixer4_F32             RX_Summer(audio_settings);
+AudioAlignLR_F32            TwinPeak(SIGNAL_HARDWARE, PIN_FOR_TP, false, audio_settings);
+
+// Test tones we can use
 AudioSynthWaveformSine_F32  sinewave1; // for audible alerts like touch beep confirmations
 AudioSynthWaveformSine_F32  sinewave2; // for audible alerts like touch beep confirmations
 
 // Line Input
-AudioConnection_F32         patchCord7a(Input,0,          FFT_Switch1,0);
-AudioConnection_F32         patchCord7b(Input,1,          FFT_Switch2,0);
+AudioConnection_F32     patchCord_RX_In_L(Input,0,                           TwinPeak,0); // correct i2s phase imbalance
+AudioConnection_F32     patchCord_RX_In_R(Input,1,                           TwinPeak,1);
+AudioConnection_F32     patchCord_RX_Ph_L(TwinPeak,0,                        I_Switch,0);  // route raw input audio to the FFT display
+AudioConnection_F32     patchCord_RX_Ph_R(TwinPeak,1,                        Q_Switch,0);
 
 // Send the test tone through a CESSB direct to the I and Q outputs 
 AudioConnection_F32         patchCord_Audio_Tone(sinewave1,0,     cessb1,0);    // CE SSB compression
-AudioConnection_F32         patchCord_Audio_Filter_L(cessb1,0,    FFT_Switch1,1); // fixed 2800Hz TX filter 
-AudioConnection_F32         patchCord_Audio_Filter_R(cessb1,1,    FFT_Switch2,1); // output is at -1350 from source so have to shift it up.
+AudioConnection_F32         patchCord_Audio_Filter_L(cessb1,0,    I_Switch,1); // fixed 2800Hz TX filter 
+AudioConnection_F32         patchCord_Audio_Filter_R(cessb1,1,    Q_Switch,1); // output is at -1350 from source so have to shift it up.
 
-
-AudioConnection_F32         patchCord8a(FFT_Switch1,0,         FFT_OutSwitch_I,0);  // if there is any filtering applied this will view the effect
-AudioConnection_F32         patchCord8b(FFT_Switch2,0,         FFT_OutSwitch_Q,0);
+//AudioConnection_F32         patchCord8a(sinewave1,0,         I_Switch,0);
+//AudioConnection_F32         patchCord8b(sinewave1,0,         Q_Switch,0);
+AudioConnection_F32         patchCord8c(I_Switch,0,         FFT_OutSwitch_I,0);  
+AudioConnection_F32         patchCord8d(Q_Switch,0,         FFT_OutSwitch_Q,0);
 
 // One or more of these FFT pipelines can be used, most likely for pan and zoom.  Normally just 1 is used.
 #ifdef FFT_4096
@@ -126,7 +139,7 @@ AudioConnection_F32         patchCord8b(FFT_Switch2,0,         FFT_OutSwitch_Q,0
     AudioConnection_F32     patchCord_FFT_R_4096(FFT_OutSwitch_Q,0,             myFFT_4096,1);
 #endif
 #ifdef FFT_2048
-    AudioConnection_F32     patchCord_FFT_L_2048(FFT_OutSwitch_I,0,             myFFT_2048,0);        // Route selected audio source to the FFT
+    AudioConnection_F32     patchCord_FFT_L_2048(FFT_OutSwitch_I,1,             myFFT_2048,0);        // Route selected audio source to the FFT
     AudioConnection_F32     patchCord_FFT_R_2048(FFT_OutSwitch_Q,1,             myFFT_2048,1);
 #endif
 #ifdef FFT_1024
@@ -134,9 +147,14 @@ AudioConnection_F32         patchCord8b(FFT_Switch2,0,         FFT_OutSwitch_Q,0
     AudioConnection_F32     patchCord_FFT_R_1024(FFT_OutSwitch_Q,2,             myFFT_1024,1);
 #endif
 
+AudioConnection_F32         patchCord11a(I_Switch,0,                            RX_Hilbert_Plus_45,0);
+AudioConnection_F32         patchCord11b(Q_Switch,0,                            RX_Hilbert_Minus_45,0);
+AudioConnection_F32         patchCord2c(RX_Hilbert_Plus_45,0,                   RX_Summer,0);  // phase shift +45 deg
+AudioConnection_F32         patchCord2d(RX_Hilbert_Minus_45,0,                  RX_Summer,1);  // phase shift -45 deg
+
 // patch through the audio input to the headphones/lineout
-AudioConnection_F32         patchCord4c(FFT_Switch1,0,    Output,0);
-AudioConnection_F32         patchCord4d(FFT_Switch2,0,    Output,1);
+AudioConnection_F32         patchCord_Audio_ToneL(RX_Summer,0,                  Output,0);
+AudioConnection_F32         patchCord_Audio_ToneR(RX_Summer,0,                  Output,1); 
 
 AudioControlSGTL5000    codec1;
 
@@ -208,13 +226,13 @@ void setup()
     //--------------------------   Setup our Audio System -------------------------------------
 
     AudioNoInterrupts();
-    AudioMemory_F32(100, audio_settings);
+    AudioMemory_F32(150, audio_settings);
     codec1.enable(); // MUST be before inputSelect()
     delay(5);
-    codec1.dacVolumeRampDisable(); // Turn off the sound for now
+    //codec1.dacVolumeRampDisable(); // Turn off the sound for now
     codec1.inputSelect(myInput);
-    codec1.lineInLevel(1);  //codec line in max level. Range 0 to 15.  0 => 3.12Vp-p, 15 => 0.24Vp-p high sensitivity
-    codec1.lineOutLevel(18); // range 13 to 31.  13 => 3.16Vp-p, 31=> 1.16Vp-p
+    codec1.lineInLevel(10);  //codec line in max level. Range 0 to 15.  0 => 3.12Vp-p, 15 => 0.24Vp-p high sensitivity
+    codec1.lineOutLevel(15); // range 13 to 31.  13 => 3.16Vp-p, 31=> 1.16Vp-p
     codec1.autoVolumeControl(2, 0, 0, -36.0, 12, 6);                   // add a compressor limiter
     //codec1.autoVolumeControl( 0-2, 0-3, 0-1, 0-96, 3, 3);
     //autoVolumeControl(maxGain, response, hardLimit, threshold, attack, decay);
@@ -222,10 +240,16 @@ void setup()
     //codec1.autoVolumeDisable();// Or don't let the volume control itself
     codec1.muteLineout(); //mute the audio output until we finish thumping relays 
     codec1.adcHighPassFilterDisable();
-    codec1.dacVolume(0); // set the "dac" volume (extra control)
-
+    codec1.audioPreProcessorEnable();  // AVC on Line-In level
+    codec1.audioPostProcessorEnable(); // AVC on Line-Out level
+    //codec1.dacVolume(0); // set the "dac" volume (extra control)
+    codec1.volume(0.1f); // set max full scale volume
     // Insert a test tone to see something on the display.
-    float sinewave_vol = 0.01;
+    
+    Serial.println("Start W7PUA AutoI2S Error Correction");
+    TwinPeaks(); // W7PUA auto detect and correct. Requires 100K resistors on the LineIn pins to a common Teensy GPIO pin
+
+    float sinewave_vol = 0.001f;
     sinewave1.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
     sinewave1.frequency(1000.0f); // Tone Frequency in Hz
     //sinewave2.amplitude(sinewave_vol);  // tone volume (0 to 1.0)
@@ -234,23 +258,54 @@ void setup()
     // Select our sources for the FFT.  mode.h will change this so CW uses the output (for now as an experiment)
     #ifdef TEST_SINE
       // shut off Inputs
-      FFT_Switch1.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
-      FFT_Switch2.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
-      // Turn on Tone
-      FFT_Switch1.gain(1, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(1, 1.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
-      #else
+      I_Switch.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      Q_Switch.gain(0, 0.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      // Turn on Tone  // This is a single tone fed into the CESSB compressor/mixer and output as I and Q
+      I_Switch.gain(1, 1.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      Q_Switch.gain(1, 1.0f); //  -1 for USB, +1 for LSB -  Sinewave1 to FFT for test cal, 0.0f is off  Tx is inverted in the FFT so USB looks like LSB
+    #else
       // Turn On Inputs
-      FFT_Switch1.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
-      FFT_Switch2.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      I_Switch.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
+      Q_Switch.gain(0, 1.0f); //  1.0f is Input source before filtering, 0.0f is off,
       // Turn OFF Tone
-      FFT_Switch1.gain(1, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
-      FFT_Switch2.gain(1, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
+      I_Switch.gain(1, 0.0f); //  1.0f  Sinewave1 to FFT for test cal, 0.0f is off
+      Q_Switch.gain(1, 0.0f); //  1.0f  Sinewave2 to FFT for test cal, 0.0f is off
     #endif
-
-    AudioInterrupts();
     
-    Change_FFT_Size(fft_size, sample_rate_Hz);  // set 4096. 2048 or 1024 for FFT
+    AudioInterrupts();
+
+    float32_t Pre_CESSB_Gain = 1.5f; // Sets the amount of clipping, 1.0 to 2.0f, 3 is excessive
+    //pLevelData = cessb1.getLevels(0);  // Gets pointer to struct
+    //Build the CESSB SSB transmitter
+    cessb1.setSampleRate_Hz(sample_rate_Hz);  // Required
+    // Set input, correction, and output gains
+    cessb1.setGains(Pre_CESSB_Gain, 2.0f, 1.0f);
+    //pLevelData = cessb1.getLevelsZ(0);  // Gets pointer to struct
+    cessb1.setSideband(true);   // true reverses the sideband
+
+    #ifdef IQ_CORRECTION_WITH_CESSB
+      // Small corrections at the output end of this object can patch up hardware flaws.
+      // _gI should be close to 1.0, _gXIQ and _gXQI should be close to 0.0.
+      // xrossIQ and crossQI can be either + or -.  If you gainI -1.0, it will reverse the sidebands!!
+      // One of either xrossIQ or crossQI should end up as 0.0 or you are fighting yourself.
+      // If you set useIQCorrection to false, there is no processing used, so this is harmless
+      // Only available in transmit audio flows with CESSB enabled.
+      // bool _useCor, float32_t _gI, float32_t _gXIQ, float32_t _gXQI)
+      //cessb1.setIQCorrections(true, 1.0, 0.0, 0.0);  // no correction, decide what you want to try ands edit
+    #else
+      //cessb1.setIQCorrections(false, 1.0, 0.0, 0.0);
+    #endif 
+    
+    RX_Hilbert_Plus_45.begin(Hilbert_Plus45_40K, 151);   // Left channel Rx
+    RX_Hilbert_Minus_45.begin(Hilbert_Minus45_40K, 151); // Right channel Rx
+    RX_Summer.gain(0, 0.5f); // Set Beep Tone ON or Off and Volume
+    RX_Summer.gain(1, 0.5f); // Set Beep Tone ON or Off and Volume
+
+    Zoom(ZOOMx1);  // Zoom level for UI control - these are defined in the .h file, placed here for reference
+                  //#define ZOOMx1      0       // Zoom out the most (fft1024 @ 48K) (aka OFF)  x1 reference
+                  //#define ZOOMx2      1       // in between (fft2048)  is x2 of 1024
+                  //#define ZOOMx4      2       // Zoom in the most (fft4096 at 96K)   is x4 of 1024
+                  //#define ZOOM_NUM    3       // Number of zoom level choiced for menu system
 
     // -------------------- Setup our radio settings and UI layout --------------------------------
 
@@ -616,4 +671,86 @@ void Change_FFT_Size(uint16_t new_size, float new_sample_rate_Hz)
         FFT_OutSwitch_Q.setChannel(2); //  1 is 1024, 0 is Off
     }
     AudioInterrupts();
+}
+
+void TwinPeaks(void)
+    {    
+        TPinfo* pData;
+        uint32_t timeSquareWave = 0;   // Switch every twoPeriods microseconds
+        uint32_t twoPeriods;
+        uint32_t tMillis = millis();
+        #if SIGNAL_HARDWARE==TP_SIGNAL_CODEC
+           Serial.println(F("Using SGTL5000 Codec output for cross-correlation test signal."));
+        #endif
+        #if SIGNAL_HARDWARE==TP_SIGNAL_IO_PIN
+            pinMode (PIN_FOR_TP, OUTPUT);    // Digital output pin
+           Serial.println(F("Using I/O pin for cross-correlation test signal."));
+        #endif
+        
+        //TwinPeak.setLRfilter(true);
+        //TwinPeak.setThreshold(TP_THRESHOLD);   Not used
+        TwinPeak.stateAlignLR(TP_MEASURE);  // Comes up TP_IDLE
+
+        #if SIGNAL_HARDWARE==TP_SIGNAL_IO_PIN
+            twoPeriods = (uint32_t)(0.5f + (2000000.0f / sample_rate_Hz));
+            // Note that for this hardware, the INO is 100% in charge of the PIN_FOR_TP
+            pData = TwinPeak.read();       // Base data to check error
+            while (pData->TPerror < 0  &&  millis()-tMillis < 2000)  // with timeout
+            {
+                if(micros()-timeSquareWave >= twoPeriods && pData->TPstate==TP_MEASURE)
+                {
+                    static uint16_t squareWave = 0;
+                    timeSquareWave = micros();
+                    squareWave = squareWave^1;
+                    digitalWrite(PIN_FOR_TP, squareWave);
+                }
+                pData = TwinPeak.read();
+            }
+            // The update has moved from Measure to Run. Ground the PIN_FOR_TP
+            TwinPeak.stateAlignLR(TP_RUN);  // TP is done, not TP_MEASURE
+            digitalWrite(PIN_FOR_TP, 0);    // Set pin to zero
+
+           Serial.println("");
+           Serial.println(F("Update  ------------ Outputs  ------------"));
+           Serial.println(F("Number  xNorm     -1        0         1   Shift Error State"));// Column headings
+           Serial.print(pData->nMeas);Serial.print(",  ");
+           Serial.print(pData->xNorm, 6);Serial.print(", ");
+           Serial.print(pData->xcVal[3], 6);Serial.print(", ");
+           Serial.print(pData->xcVal[0], 6);Serial.print(", ");
+           Serial.print(pData->xcVal[1], 6);Serial.print(", ");
+           Serial.print(pData->neededShift);Serial.print(",   ");
+           Serial.print(pData->TPerror);Serial.print(",    ");
+           Serial.println(pData->TPstate);
+           Serial.println("");
+
+            // You can see the injected signal level by theSerial.printed variable, pData->xNorm
+            // It is the sum of the 4 cross-correlation numbers and if it is below 0.0001 the
+            // measurement is getting noisy and un-reliable.  Raise the injected signal level
+            // to solve the problem.
+        #endif        
+    }
+
+void Zoom(uint8_t _zoom_Level)
+{
+    switch (_zoom_Level)
+    {
+        #ifdef FFT_1024
+                case ZOOMx1:
+                    Change_FFT_Size(1024, sample_rate_Hz);
+                    break; // Zoom farthest in
+        #endif
+        #ifdef FFT_2048
+                case ZOOMx2:
+                    Change_FFT_Size(2048, sample_rate_Hz);
+                    break; // Zoom farthest in
+        #endif
+        #ifdef FFT_4096
+                case ZOOMx4:
+                    Change_FFT_Size(4096, sample_rate_Hz);
+                    break; // Zoom farthest in
+        #endif
+                default:
+                    Change_FFT_Size(FFT_SIZE, sample_rate_Hz);
+                    break; // Zoom farthest in
+    }
 }
